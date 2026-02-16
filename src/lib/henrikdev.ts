@@ -33,8 +33,8 @@ export function fetchMMR(name: string, tag: string, region = "ap") {
   );
 }
 
-export function fetchMatchHistory(name: string, tag: string, region = "ap") {
+export function fetchMatchHistory(name: string, tag: string, region = "ap", size = 10) {
   return apiFetch<ValorantMatch[]>(
-    `/valorant/v4/matches/${region}/pc/${encodeURIComponent(name)}/${encodeURIComponent(tag)}?size=10`
+    `/valorant/v4/matches/${region}/pc/${encodeURIComponent(name)}/${encodeURIComponent(tag)}?size=${size}`
   );
 }

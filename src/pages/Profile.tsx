@@ -1,15 +1,15 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Header } from "@/components/Header";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { fetchAccount, fetchMMR, fetchMatchHistory } from "@/lib/henrikdev";
 import { toast } from "@/hooks/use-toast";
 import {
-  Search, ShieldCheck, Loader2, ArrowLeft, Crosshair,
-  Target, Skull, Swords, TrendingUp, TrendingDown, ChevronDown, ChevronUp,
-  Clock, Flame, Shield,
+  Search, ShieldCheck, Loader2, ArrowLeft,
+  Target, Swords, TrendingUp, TrendingDown, ChevronDown, ChevronUp,
+  Clock, Flame, Shield, MapPin,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import type { ValorantAccount, ValorantMMR, ValorantMatch, ValorantMatchPlayer, Rank } from "@/lib/types";
 import { RANKS } from "@/lib/types";
 
@@ -53,14 +53,31 @@ interface AgentStats {
   headshotPct: number;
 }
 
+interface MapStats {
+  name: string;
+  mapId: string;
+  matches: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  avgKills: number;
+  avgDeaths: number;
+  avgAssists: number;
+  kd: number;
+}
+
 function computeStats(
   matches: ValorantMatch[],
   accountName: string,
   accountTag: string
-): { stats: AggregatedStats; agents: AgentStats[] } {
+): { stats: AggregatedStats; agents: AgentStats[]; maps: MapStats[] } {
   const agentMap = new Map<
     string,
     { name: string; id: string; matches: number; wins: number; kills: number; deaths: number; assists: number; score: number; hs: number; bs: number; ls: number }
+  >();
+  const mapMap = new Map<
+    string,
+    { name: string; id: string; matches: number; wins: number; kills: number; deaths: number; assists: number }
   >();
 
   let wins = 0,
@@ -102,35 +119,40 @@ function computeStats(
     totalBS += bs;
     totalLS += ls;
 
+    // Agent stats
     const agentName = player.agent?.name ?? "Unknown";
     const agentId = player.agent?.id ?? "unknown";
-    const key = agentName.toLowerCase();
-    const existing = agentMap.get(key);
-    if (existing) {
-      existing.matches++;
-      if (won) existing.wins++;
-      existing.kills += k;
-      existing.deaths += d;
-      existing.assists += a;
-      existing.score += s;
-      existing.hs += hs;
-      existing.bs += bs;
-      existing.ls += ls;
+    const agentKey = agentName.toLowerCase();
+    const existingAgent = agentMap.get(agentKey);
+    if (existingAgent) {
+      existingAgent.matches++;
+      if (won) existingAgent.wins++;
+      existingAgent.kills += k;
+      existingAgent.deaths += d;
+      existingAgent.assists += a;
+      existingAgent.score += s;
+      existingAgent.hs += hs;
+      existingAgent.bs += bs;
+      existingAgent.ls += ls;
     } else {
-      agentMap.set(key, {
-        name: agentName,
-        id: agentId,
-        matches: 1,
-        wins: won ? 1 : 0,
-        kills: k,
-        deaths: d,
-        assists: a,
-        score: s,
-        hs,
-        bs,
-        ls,
-      });
+      agentMap.set(agentKey, { name: agentName, id: agentId, matches: 1, wins: won ? 1 : 0, kills: k, deaths: d, assists: a, score: s, hs, bs, ls });
     }
+
+    // Map stats
+    const mapName = match.metadata?.map?.name ?? "Unknown";
+    const mapId = match.metadata?.map?.id ?? "unknown";
+    const mapKey = mapName.toLowerCase();
+    const existingMap = mapMap.get(mapKey);
+    if (existingMap) {
+      existingMap.matches++;
+      if (won) existingMap.wins++;
+      existingMap.kills += k;
+      existingMap.deaths += d;
+      existingMap.assists += a;
+    } else {
+      mapMap.set(mapKey, { name: mapName, id: mapId, matches: 1, wins: won ? 1 : 0, kills: k, deaths: d, assists: a });
+    }
+
   }
 
   const n = counted.length || 1;
@@ -162,20 +184,28 @@ function computeStats(
       const aN = a.matches || 1;
       const aShots = a.hs + a.bs + a.ls;
       return {
-        name: a.name,
-        agentId: a.id,
-        matches: a.matches,
-        wins: a.wins,
-        kills: a.kills,
-        deaths: a.deaths,
-        assists: a.assists,
+        name: a.name, agentId: a.id, matches: a.matches, wins: a.wins,
+        kills: a.kills, deaths: a.deaths, assists: a.assists,
         avgScore: a.score / aN,
         headshotPct: aShots > 0 ? (a.hs / aShots) * 100 : 0,
       };
     })
     .sort((a, b) => b.matches - a.matches);
 
-  return { stats, agents };
+  const maps: MapStats[] = Array.from(mapMap.values())
+    .map((m) => {
+      const mN = m.matches || 1;
+      return {
+        name: m.name, mapId: m.id, matches: m.matches, wins: m.wins,
+        losses: m.matches - m.wins,
+        winRate: (m.wins / mN) * 100,
+        avgKills: m.kills / mN, avgDeaths: m.deaths / mN, avgAssists: m.assists / mN,
+        kd: m.deaths > 0 ? m.kills / m.deaths : m.kills,
+      };
+    })
+    .sort((a, b) => b.matches - a.matches);
+
+  return { stats, agents, maps };
 }
 
 function findPlayer(match: ValorantMatch, name: string, tag: string): ValorantMatchPlayer | undefined {
@@ -189,8 +219,18 @@ function formatDuration(ms: number): string {
   return `${mins}m`;
 }
 
+function parseMatchDate(dateStr: string): number {
+  // Handle ISO string, or numeric string (unix seconds/ms)
+  const num = Number(dateStr);
+  if (!isNaN(num)) {
+    // If it's a small number, it's seconds; otherwise ms
+    return num < 1e12 ? num * 1000 : num;
+  }
+  return new Date(dateStr).getTime();
+}
+
 function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
+  const diff = Date.now() - parseMatchDate(dateStr);
   const mins = Math.floor(diff / 60000);
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
@@ -236,6 +276,83 @@ function HitsBar({ hs, bs, ls }: { hs: number; bs: number; ls: number }) {
   );
 }
 
+function SkeletonBlock({ className }: { className?: string }) {
+  return <div className={`bg-white/[0.03] animate-pulse rounded-sm ${className ?? ""}`} />;
+}
+
+function ProfileSkeleton() {
+  return (
+    <div className="space-y-4">
+      {/* Banner skeleton */}
+      <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
+        <div className="h-0.5 bg-white/[0.06]" />
+        <div className="p-5 sm:p-6 flex items-center gap-4">
+          <SkeletonBlock className="w-16 h-20 sm:w-20 sm:h-24 clip-angle-sm shrink-0" />
+          <div className="flex-1 space-y-3">
+            <SkeletonBlock className="h-6 w-48" />
+            <SkeletonBlock className="h-4 w-24" />
+            <SkeletonBlock className="h-8 w-56 clip-angle-sm" />
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs skeleton */}
+      <div className="flex gap-1 bg-white/[0.02] border border-white/[0.06] p-1 clip-angle-sm">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <SkeletonBlock key={i} className="flex-1 h-9 clip-angle-sm" />
+        ))}
+      </div>
+
+      {/* Stats grid skeleton */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="bg-white/[0.02] border border-white/[0.06] p-3 sm:p-4 clip-angle-sm space-y-2">
+            <SkeletonBlock className="h-3 w-16" />
+            <SkeletonBlock className="h-7 w-20" />
+            <SkeletonBlock className="h-3 w-24" />
+          </div>
+        ))}
+      </div>
+
+      {/* Chart skeleton */}
+      <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
+        <div className="h-0.5 bg-white/[0.06]" />
+        <div className="p-5 space-y-3">
+          <SkeletonBlock className="h-4 w-36" />
+          <SkeletonBlock className="h-2 w-full clip-angle-sm" />
+          <div className="flex gap-4">
+            <SkeletonBlock className="h-3 w-20" />
+            <SkeletonBlock className="h-3 w-20" />
+            <SkeletonBlock className="h-3 w-20" />
+          </div>
+        </div>
+      </div>
+
+      {/* Agent cards skeleton */}
+      <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
+        <div className="h-0.5 bg-white/[0.06]" />
+        <div className="p-5 space-y-2">
+          <SkeletonBlock className="h-4 w-28 mb-3" />
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/[0.04] clip-angle-sm">
+              <SkeletonBlock className="w-10 h-10 clip-angle-sm shrink-0" />
+              <div className="flex-1 space-y-2">
+                <SkeletonBlock className="h-4 w-24" />
+                <SkeletonBlock className="h-1 w-full" />
+                <div className="flex gap-3">
+                  <SkeletonBlock className="h-3 w-14" />
+                  <SkeletonBlock className="h-3 w-14" />
+                  <SkeletonBlock className="h-3 w-14" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AgentCard({ agent, maxMatches }: { agent: AgentStats; maxMatches: number }) {
   const wr = agent.matches > 0 ? (agent.wins / agent.matches) * 100 : 0;
   const kd = agent.deaths > 0 ? agent.kills / agent.deaths : agent.kills;
@@ -256,7 +373,6 @@ function AgentCard({ agent, maxMatches }: { agent: AgentStats; maxMatches: numbe
           <p className="font-display text-sm font-bold tracking-wider text-foreground truncate">{agent.name.toUpperCase()}</p>
           <span className="font-display text-[10px] tracking-wider text-muted-foreground/50 shrink-0 ml-2">{agent.matches} {agent.matches === 1 ? "MATCH" : "MATCHES"}</span>
         </div>
-        {/* Usage bar */}
         <div className="h-1 w-full bg-white/[0.04] mb-1.5 overflow-hidden">
           <div className="h-full bg-primary/60 transition-all" style={{ width: `${barWidth}%` }} />
         </div>
@@ -264,6 +380,35 @@ function AgentCard({ agent, maxMatches }: { agent: AgentStats; maxMatches: numbe
           <span className={wr >= 50 ? "text-green-400" : "text-red-400"}>{wr.toFixed(0)}% WR</span>
           <span>{kd.toFixed(2)} KD</span>
           <span>{agent.headshotPct.toFixed(0)}% HS</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MapCard({ map }: { map: MapStats }) {
+  const mapListImage = `https://media.valorant-api.com/maps/${map.mapId}/listviewicon.png`;
+
+  return (
+    <div className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/[0.04] clip-angle-sm group hover:border-white/[0.1] transition-colors">
+      <div className="w-14 h-10 bg-white/[0.04] clip-angle-sm flex items-center justify-center shrink-0 overflow-hidden">
+        <img
+          src={mapListImage}
+          alt={map.name}
+          className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-display text-sm font-bold tracking-wider text-foreground truncate">{map.name.toUpperCase()}</p>
+          <span className="font-display text-[10px] tracking-wider text-muted-foreground/50 shrink-0 ml-2">{map.matches} {map.matches === 1 ? "GAME" : "GAMES"}</span>
+        </div>
+        <div className="flex items-center gap-3 text-[10px] font-display tracking-wider text-muted-foreground/50">
+          <span className={map.winRate >= 50 ? "text-green-400" : "text-red-400"}>{map.winRate.toFixed(0)}% WR</span>
+          <span>{map.wins}W {map.losses}L</span>
+          <span>{map.kd.toFixed(2)} KD</span>
+          <span className="hidden sm:inline">{map.avgKills.toFixed(1)}/{map.avgDeaths.toFixed(1)}/{map.avgAssists.toFixed(1)}</span>
         </div>
       </div>
     </div>
@@ -297,79 +442,48 @@ function MatchRow({ match, accountName, accountTag }: { match: ValorantMatch; ac
 
   return (
     <div className={`border clip-angle-sm overflow-hidden transition-colors ${resultBorder}`}>
-      {/* Main row */}
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-2 sm:gap-3 p-3 text-left hover:bg-white/[0.02] transition-colors"
       >
-        {/* Result */}
         <div className="w-10 shrink-0 text-center">
           <span className={`font-display text-xs font-bold tracking-wider ${resultColor}`}>{resultLabel}</span>
           <p className="font-display text-[10px] text-muted-foreground/40 tracking-wider">{score}</p>
         </div>
-
-        {/* Vertical divider */}
         <div className={`w-0.5 h-10 shrink-0 ${draw ? "bg-yellow-500/20" : won ? "bg-green-500/20" : "bg-red-500/20"}`} />
-
-        {/* Agent + Map */}
         <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
           <div className="w-8 h-8 bg-white/[0.04] clip-angle-sm flex items-center justify-center shrink-0 overflow-hidden">
             {player?.agent?.id && (
-              <img
-                src={`https://media.valorant-api.com/agents/${player.agent.id}/displayicon.png`}
-                alt={player?.agent?.name ?? ""}
-                className="w-7 h-7 object-cover"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-              />
+              <img src={`https://media.valorant-api.com/agents/${player.agent.id}/displayicon.png`} alt={player?.agent?.name ?? ""} className="w-7 h-7 object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             )}
           </div>
           <div className="min-w-0">
-            <p className="font-display text-xs tracking-wider text-foreground truncate">
-              {player?.agent?.name?.toUpperCase() ?? "?"}
-            </p>
-            <p className="text-[10px] text-muted-foreground/40 font-display tracking-wider truncate">
-              {match.metadata?.map?.name ?? "Unknown"} · {match.metadata?.queue?.name ?? ""}
-            </p>
+            <p className="font-display text-xs tracking-wider text-foreground truncate">{player?.agent?.name?.toUpperCase() ?? "?"}</p>
+            <p className="text-[10px] text-muted-foreground/40 font-display tracking-wider truncate">{match.metadata?.map?.name ?? "Unknown"} · {match.metadata?.queue?.name ?? ""}</p>
           </div>
         </div>
-
-        {/* KDA */}
         <div className="hidden sm:block text-center shrink-0 w-20">
-          <p className="font-display text-sm font-bold tracking-wider text-foreground">
-            {k}<span className="text-muted-foreground/40">/</span>{d}<span className="text-muted-foreground/40">/</span>{a}
-          </p>
+          <p className="font-display text-sm font-bold tracking-wider text-foreground">{k}<span className="text-muted-foreground/40">/</span>{d}<span className="text-muted-foreground/40">/</span>{a}</p>
           <p className="text-[10px] text-muted-foreground/40 font-display tracking-wider">{kd} KD</p>
         </div>
-
-        {/* HS % */}
         <div className="hidden md:block text-center shrink-0 w-14">
           <p className="font-display text-sm font-bold tracking-wider text-foreground">{hsPct}%</p>
           <p className="text-[10px] text-muted-foreground/40 font-display tracking-wider">HS</p>
         </div>
-
-        {/* Time */}
         <div className="text-right shrink-0 w-12">
-          <p className="text-[10px] text-muted-foreground/30 font-display tracking-wider">
-            {match.metadata?.started_at ? timeAgo(match.metadata.started_at) : ""}
-          </p>
+          <p className="text-[10px] text-muted-foreground/30 font-display tracking-wider">{match.metadata?.started_at ? timeAgo(match.metadata.started_at) : ""}</p>
           {duration && <p className="text-[10px] text-muted-foreground/20 font-display tracking-wider">{duration}</p>}
         </div>
-
-        {/* Chevron */}
         <div className="shrink-0 text-muted-foreground/30">
           {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
         </div>
       </button>
 
-      {/* Expanded details */}
       {expanded && (
         <div className="border-t border-white/[0.04] p-3 sm:p-4 space-y-3 bg-white/[0.01]">
-          {/* Mobile KDA (shown only on small screens) */}
           <div className="sm:hidden flex items-center gap-4">
             <div>
-              <p className="font-display text-sm font-bold tracking-wider text-foreground">
-                {k}<span className="text-muted-foreground/40">/</span>{d}<span className="text-muted-foreground/40">/</span>{a}
-              </p>
+              <p className="font-display text-sm font-bold tracking-wider text-foreground">{k}<span className="text-muted-foreground/40">/</span>{d}<span className="text-muted-foreground/40">/</span>{a}</p>
               <p className="text-[10px] text-muted-foreground/40 font-display tracking-wider">{kd} KD</p>
             </div>
             <div>
@@ -377,8 +491,6 @@ function MatchRow({ match, accountName, accountTag }: { match: ValorantMatch; ac
               <p className="text-[10px] text-muted-foreground/40 font-display tracking-wider">HEADSHOT</p>
             </div>
           </div>
-
-          {/* Detail grid */}
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             <div className="bg-white/[0.02] p-2 clip-angle-sm">
               <p className="text-[9px] text-muted-foreground/40 font-display tracking-[0.2em]">SCORE</p>
@@ -390,17 +502,13 @@ function MatchRow({ match, accountName, accountTag }: { match: ValorantMatch; ac
             </div>
             <div className="bg-white/[0.02] p-2 clip-angle-sm">
               <p className="text-[9px] text-muted-foreground/40 font-display tracking-[0.2em]">DMG/RND</p>
-              <p className="font-display text-sm font-bold text-foreground">
-                {team ? Math.round(damage / Math.max(team.rounds.won + team.rounds.lost, 1)) : "—"}
-              </p>
+              <p className="font-display text-sm font-bold text-foreground">{team ? Math.round(damage / Math.max(team.rounds.won + team.rounds.lost, 1)) : "—"}</p>
             </div>
             {player?.ability_casts && (
               <>
                 <div className="bg-white/[0.02] p-2 clip-angle-sm">
                   <p className="text-[9px] text-muted-foreground/40 font-display tracking-[0.2em]">ABILITIES</p>
-                  <p className="font-display text-sm font-bold text-foreground">
-                    {(player.ability_casts.grenade ?? 0) + (player.ability_casts.ability1 ?? 0) + (player.ability_casts.ability2 ?? 0) + (player.ability_casts.ultimate ?? 0)}
-                  </p>
+                  <p className="font-display text-sm font-bold text-foreground">{(player.ability_casts.grenade ?? 0) + (player.ability_casts.ability1 ?? 0) + (player.ability_casts.ability2 ?? 0) + (player.ability_casts.ultimate ?? 0)}</p>
                 </div>
                 <div className="bg-white/[0.02] p-2 clip-angle-sm">
                   <p className="text-[9px] text-muted-foreground/40 font-display tracking-[0.2em]">ULTS</p>
@@ -409,8 +517,6 @@ function MatchRow({ match, accountName, accountTag }: { match: ValorantMatch; ac
               </>
             )}
           </div>
-
-          {/* Hit distribution */}
           <div>
             <p className="text-[10px] text-muted-foreground/40 font-display tracking-[0.2em] mb-1.5">HIT DISTRIBUTION</p>
             <HitsBar hs={hs} bs={bs} ls={ls} />
@@ -423,17 +529,25 @@ function MatchRow({ match, accountName, accountTag }: { match: ValorantMatch; ac
 
 // ─── Main ────────────────────────────────────────────────
 
+type TabId = "overview" | "matches" | "agents" | "maps";
+type TimeRange = 7 | 14 | 30 | "all";
+
 const Profile = () => {
   const { user, updateProfile } = useAuth();
-  const [query, setQuery] = useState("");
+  const [searchParams] = useSearchParams();
+  const initialQ = searchParams.get("q") ?? "";
+  const [query, setQuery] = useState(initialQ);
   const [loading, setLoading] = useState(false);
+  const didAutoSearch = useRef(false);
   const [account, setAccount] = useState<ValorantAccount | null>(null);
   const [mmr, setMMR] = useState<ValorantMMR | null>(null);
   const [matches, setMatches] = useState<ValorantMatch[]>([]);
   const [error, setError] = useState("");
   const [verifying, setVerifying] = useState(false);
-  const [activeTab, setActiveTab] = useState<"overview" | "matches" | "agents">("overview");
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [modeFilter, setModeFilter] = useState<"all" | "competitive" | "unrated" | "deathmatch" | "swiftplay">("competitive");
+  const [timeRange, setTimeRange] = useState<TimeRange>("all");
+  const [refreshing, setRefreshing] = useState(false);
 
   const MODE_FILTERS = [
     { id: "all" as const, label: "ALL" },
@@ -443,9 +557,8 @@ const Profile = () => {
     { id: "swiftplay" as const, label: "SWIFT" },
   ];
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const parts = query.trim().split("#");
+  const doSearch = useCallback(async (searchQuery: string) => {
+    const parts = searchQuery.trim().split("#");
     if (parts.length !== 2 || !parts[0] || !parts[1]) {
       toast({ title: "Enter a valid Riot ID (Name#Tag)", variant: "destructive" });
       return;
@@ -461,7 +574,7 @@ const Profile = () => {
     const [accRes, mmrRes, matchRes] = await Promise.all([
       fetchAccount(name, tag),
       fetchMMR(name, tag),
-      fetchMatchHistory(name, tag),
+      fetchMatchHistory(name, tag, "ap", 50),
     ]);
 
     setLoading(false);
@@ -473,22 +586,50 @@ const Profile = () => {
     setAccount(accRes.data);
     if (mmrRes.data) setMMR(mmrRes.data);
     if (matchRes.data) setMatches(matchRes.data);
+  }, []);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    doSearch(query);
   };
 
+  useEffect(() => {
+    if (initialQ && !didAutoSearch.current) {
+      didAutoSearch.current = true;
+      doSearch(initialQ);
+    }
+  }, [initialQ, doSearch]);
+
   const filteredMatches = useMemo(() => {
-    if (modeFilter === "all") return matches;
-    return matches.filter((m) => {
-      const queueId = (m.metadata?.queue?.id ?? "").toLowerCase();
-      const queueName = (m.metadata?.queue?.name ?? "").toLowerCase();
-      switch (modeFilter) {
-        case "competitive": return queueId === "competitive" || queueName === "competitive";
-        case "unrated": return queueId === "unrated" || queueName === "unrated";
-        case "deathmatch": return queueId === "deathmatch" || queueName === "deathmatch";
-        case "swiftplay": return queueId === "swiftplay" || queueName === "swiftplay";
-        default: return true;
-      }
-    });
-  }, [matches, modeFilter]);
+    let filtered = matches;
+
+    // Time range filter
+    if (timeRange !== "all") {
+      const cutoff = Date.now() - timeRange * 24 * 60 * 60 * 1000;
+      filtered = filtered.filter((m) => {
+        if (!m.metadata?.started_at) return false;
+        const started = parseMatchDate(m.metadata.started_at);
+        return !isNaN(started) && started >= cutoff;
+      });
+    }
+
+    // Mode filter
+    if (modeFilter !== "all") {
+      filtered = filtered.filter((m) => {
+        const queueId = (m.metadata?.queue?.id ?? "").toLowerCase();
+        const queueName = (m.metadata?.queue?.name ?? "").toLowerCase();
+        switch (modeFilter) {
+          case "competitive": return queueId === "competitive" || queueName === "competitive";
+          case "unrated": return queueId === "unrated" || queueName === "unrated";
+          case "deathmatch": return queueId === "deathmatch" || queueName === "deathmatch";
+          case "swiftplay": return queueId === "swiftplay" || queueName === "swiftplay";
+          default: return true;
+        }
+      });
+    }
+
+    return filtered;
+  }, [matches, modeFilter, timeRange]);
 
   const computed = useMemo(() => {
     if (!account || filteredMatches.length === 0) return null;
@@ -513,10 +654,18 @@ const Profile = () => {
     setVerifying(false);
   };
 
-  const tabs = [
-    { id: "overview" as const, label: "OVERVIEW" },
-    { id: "matches" as const, label: "MATCHES" },
-    { id: "agents" as const, label: "AGENTS" },
+  const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
+    { id: "overview", label: "OVERVIEW", icon: <Target className="h-3 w-3" /> },
+    { id: "matches", label: "MATCHES", icon: <Clock className="h-3 w-3" /> },
+    { id: "agents", label: "AGENTS", icon: <Shield className="h-3 w-3" /> },
+    { id: "maps", label: "MAPS", icon: <MapPin className="h-3 w-3" /> },
+  ];
+
+  const TIME_RANGES: { value: TimeRange; label: string }[] = [
+    { value: 7, label: "LAST 7 DAYS" },
+    { value: 14, label: "LAST 14 DAYS" },
+    { value: 30, label: "LAST 30 DAYS" },
+    { value: "all", label: "ALL TIME" },
   ];
 
   return (
@@ -541,10 +690,9 @@ const Profile = () => {
             />
             <button
               type="submit"
-              disabled={loading}
               className="h-10 px-5 bg-primary text-primary-foreground font-display text-xs tracking-[0.15em] clip-angle-sm hover:opacity-90 transition-opacity flex items-center gap-2 shrink-0"
             >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              <Search className="h-4 w-4" />
               SEARCH
             </button>
           </form>
@@ -558,27 +706,28 @@ const Profile = () => {
 
           {/* Loading */}
           {loading && (
-            <div className="flex flex-col items-center justify-center py-20 gap-3">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <p className="font-display text-xs tracking-[0.2em] text-muted-foreground/40">LOADING PROFILE...</p>
+            <div className="space-y-4">
+              <div className="flex items-center justify-center gap-2 py-3">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <p className="font-display text-xs tracking-[0.2em] text-muted-foreground/50">LOADING PROFILE...</p>
+              </div>
+              <ProfileSkeleton />
             </div>
           )}
 
-          {/* Empty state */}
+          {/* Empty state — skeleton placeholder */}
           {!account && !loading && !error && (
-            <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-              <div className="relative">
-                <Crosshair className="h-16 w-16 text-white/[0.04]" strokeWidth={0.5} />
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-2 h-2 rounded-full bg-primary/20 animate-pulse" />
+            <div className="space-y-6">
+              <div className="text-center space-y-2 py-4">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Target className="h-5 w-5 text-primary/30" />
+                  <h3 className="font-display text-lg text-muted-foreground/40 tracking-[0.2em]">STAT CHECKER</h3>
                 </div>
-              </div>
-              <div className="space-y-1">
-                <h3 className="font-display text-lg text-muted-foreground/30 tracking-[0.2em]">PLAYER LOOKUP</h3>
-                <p className="text-sm text-muted-foreground/20 max-w-xs">
-                  Search any Riot ID to see their rank, stats, and match history
+                <p className="text-sm text-muted-foreground/25 max-w-sm mx-auto">
+                  Search any Riot ID to see rank, stats, match history, and map performance
                 </p>
               </div>
+              <ProfileSkeleton />
             </div>
           )}
 
@@ -587,7 +736,6 @@ const Profile = () => {
             <div className="space-y-4">
               {/* ─── Hero Banner ─── */}
               <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden relative">
-                {/* Banner background from player card */}
                 {account.card?.wide && (
                   <div className="absolute inset-0 opacity-20">
                     <img src={account.card.wide} alt="" className="w-full h-full object-cover" />
@@ -596,44 +744,29 @@ const Profile = () => {
                 )}
                 <div className="h-0.5 bg-primary" />
                 <div className="relative p-5 sm:p-6 flex items-center gap-4 sm:gap-5">
-                  {/* Player card */}
                   {account.card?.large && (
                     <div className="shrink-0 w-16 h-20 sm:w-20 sm:h-24 clip-angle-sm overflow-hidden border border-white/[0.08]">
                       <img src={account.card.large} alt="Player card" className="w-full h-full object-cover" />
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-start gap-3 justify-between">
-                      <div className="min-w-0">
-                        <h2 className="font-display text-xl sm:text-2xl font-bold tracking-wide text-foreground truncate leading-tight">
-                          {account.name}
-                          <span className="text-muted-foreground/50 font-normal text-base sm:text-lg">#{account.tag}</span>
-                        </h2>
-                        <div className="flex items-center gap-3 mt-1">
-                          <span className="text-[11px] text-muted-foreground/50 font-display tracking-wider">
-                            LVL {account.account_level}
-                          </span>
-                          {account.region && (
-                            <span className="text-[11px] text-muted-foreground/30 font-display tracking-wider uppercase">
-                              {account.region}
-                            </span>
-                          )}
-                        </div>
+                    <div className="min-w-0">
+                      <h2 className="font-display text-xl sm:text-2xl font-bold tracking-wide text-foreground truncate leading-tight">
+                        {account.name}
+                        <span className="text-muted-foreground/50 font-normal text-base sm:text-lg">#{account.tag}</span>
+                      </h2>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-[11px] text-muted-foreground/50 font-display tracking-wider">LVL {account.account_level}</span>
+                        {account.region && (
+                          <span className="text-[11px] text-muted-foreground/30 font-display tracking-wider uppercase">{account.region}</span>
+                        )}
                       </div>
                     </div>
-
-                    {/* Rank inline */}
                     {mmr && (
                       <div className="flex items-center gap-3 mt-2">
                         <div className="flex items-center gap-2 bg-white/[0.04] px-3 py-1.5 clip-angle-sm">
-                          <span className="font-display text-sm font-bold tracking-wider text-foreground">
-                            {mmr.current?.tier?.name ?? "Unranked"}
-                          </span>
-                          {mmr.current?.rr != null && (
-                            <span className="text-[11px] text-muted-foreground font-display tracking-wider">
-                              {mmr.current.rr} RR
-                            </span>
-                          )}
+                          <span className="font-display text-sm font-bold tracking-wider text-foreground">{mmr.current?.tier?.name ?? "Unranked"}</span>
+                          {mmr.current?.rr != null && <span className="text-[11px] text-muted-foreground font-display tracking-wider">{mmr.current.rr} RR</span>}
                           {mmr.current?.last_change != null && (
                             <span className={`text-[11px] font-display tracking-wider flex items-center gap-0.5 ${mmr.current.last_change >= 0 ? "text-green-400" : "text-red-400"}`}>
                               {mmr.current.last_change >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
@@ -650,8 +783,6 @@ const Profile = () => {
                     )}
                   </div>
                 </div>
-
-                {/* Verify button */}
                 {isOwnProfile && (
                   <div className="relative px-5 sm:px-6 pb-4">
                     <button
@@ -663,9 +794,7 @@ const Profile = () => {
                       {verifying ? "VERIFYING..." : user?.verifiedRank ? "RE-VERIFY RANK" : "VERIFY RANK"}
                     </button>
                     {user?.verifiedRank && (
-                      <span className="ml-3 text-[10px] text-green-400/60 font-display tracking-wider">
-                        VERIFIED: {user.verifiedRank.toUpperCase()}
-                      </span>
+                      <span className="ml-3 text-[10px] text-green-400/60 font-display tracking-wider">VERIFIED: {user.verifiedRank.toUpperCase()}</span>
                     )}
                   </div>
                 )}
@@ -674,61 +803,80 @@ const Profile = () => {
               {/* ─── Tabs + Mode Filter ─── */}
               {matches.length > 0 && (
                 <>
-                  <div className="flex gap-1 bg-white/[0.02] border border-white/[0.06] p-1 clip-angle-sm">
+                  <div className="flex gap-1 bg-white/[0.02] border border-white/[0.06] p-1 clip-angle-sm overflow-x-auto">
                     {tabs.map((tab) => (
                       <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
-                        className={`flex-1 h-9 font-display text-xs tracking-[0.15em] transition-all clip-angle-sm ${
+                        className={`flex-1 h-9 font-display text-[10px] sm:text-xs tracking-[0.12em] sm:tracking-[0.15em] transition-all clip-angle-sm flex items-center justify-center gap-1.5 whitespace-nowrap min-w-0 ${
                           activeTab === tab.id
                             ? "bg-primary text-primary-foreground"
                             : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
                         }`}
                       >
-                        {tab.label}
+                        {tab.icon}
+                        <span className="hidden sm:inline">{tab.label}</span>
+                        <span className="sm:hidden">{tab.label.slice(0, 3)}</span>
                       </button>
                     ))}
                   </div>
 
-                  {/* Mode filter */}
+                  {/* Filters row */}
                   <div className="flex items-center gap-2">
-                    <span className="font-display text-[10px] tracking-[0.2em] text-muted-foreground/40 shrink-0">MODE</span>
-                    <div className="flex gap-1 flex-wrap">
-                      {MODE_FILTERS.map((mode) => (
-                        <button
-                          key={mode.id}
-                          onClick={() => setModeFilter(mode.id)}
-                          className={`h-7 px-3 font-display text-[10px] tracking-[0.15em] transition-all clip-angle-sm ${
-                            modeFilter === mode.id
-                              ? "bg-white/[0.1] text-foreground border border-white/[0.15]"
-                              : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-white/[0.04] border border-transparent"
-                          }`}
-                        >
-                          {mode.label}
-                        </button>
-                      ))}
+                    {/* Mode filter */}
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <span className="font-display text-[10px] tracking-[0.2em] text-muted-foreground/40 shrink-0">MODE</span>
+                      <div className="flex gap-1 flex-wrap">
+                        {MODE_FILTERS.map((mode) => (
+                          <button
+                            key={mode.id}
+                            onClick={() => setModeFilter(mode.id)}
+                            className={`h-7 px-3 font-display text-[10px] tracking-[0.15em] transition-all clip-angle-sm ${
+                              modeFilter === mode.id
+                                ? "bg-white/[0.1] text-foreground border border-white/[0.15]"
+                                : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-white/[0.04] border border-transparent"
+                            }`}
+                          >
+                            {mode.label}
+                          </button>
+                        ))}
+                      </div>
+                      {filteredMatches.length !== matches.length && (
+                        <span className="text-[10px] text-muted-foreground/30 font-display tracking-wider shrink-0">
+                          {filteredMatches.length}/{matches.length}
+                        </span>
+                      )}
                     </div>
-                    {filteredMatches.length !== matches.length && (
-                      <span className="text-[10px] text-muted-foreground/30 font-display tracking-wider ml-auto shrink-0">
-                        {filteredMatches.length}/{matches.length}
-                      </span>
-                    )}
+
+                    {/* Time range dropdown */}
+                    <div className="relative shrink-0">
+                      <select
+                        value={timeRange}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTimeRange(val === "all" ? "all" : (Number(val) as 7 | 14 | 30));
+                          setRefreshing(true);
+                          setTimeout(() => setRefreshing(false), 300);
+                        }}
+                        className="appearance-none bg-white/[0.03] border border-white/[0.08] hover:border-white/[0.15] text-foreground font-display text-[10px] tracking-[0.15em] h-7 pl-3 pr-7 clip-angle-sm cursor-pointer transition-colors focus:outline-none focus:border-primary/40"
+                      >
+                        {TIME_RANGES.map((opt) => (
+                          <option key={opt.value} value={opt.value} className="bg-card text-foreground">
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground/40 pointer-events-none" />
+                    </div>
                   </div>
 
-                  {/* No matches for filter */}
-                  {filteredMatches.length === 0 && activeTab !== "matches" && (
+                  <div className={`transition-opacity duration-300 space-y-4 ${refreshing ? "opacity-30" : "opacity-100"}`}>
+                  {filteredMatches.length === 0 && (
                     <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
                       <div className="h-0.5 bg-primary" />
                       <div className="p-8 text-center">
-                        <p className="font-display text-sm tracking-wider text-muted-foreground/40">
-                          No matches found for this mode
-                        </p>
-                        <button
-                          onClick={() => setModeFilter("all")}
-                          className="mt-3 text-[11px] text-primary/60 hover:text-primary font-display tracking-wider transition-colors"
-                        >
-                          SHOW ALL MODES
-                        </button>
+                        <p className="font-display text-sm tracking-wider text-muted-foreground/40">No matches found for this filter</p>
+                        <button onClick={() => { setModeFilter("all"); setTimeRange("all"); }} className="mt-3 text-[11px] text-primary/60 hover:text-primary font-display tracking-wider transition-colors">RESET FILTERS</button>
                       </div>
                     </div>
                   )}
@@ -736,76 +884,59 @@ const Profile = () => {
                   {/* ─── Overview Tab ─── */}
                   {activeTab === "overview" && computed && (
                     <div className="space-y-4">
-                      {/* Key Stats Grid */}
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <StatBox
-                          label="WIN RATE"
-                          value={`${computed.stats.winRate.toFixed(1)}%`}
-                          sub={`${computed.stats.wins}W ${computed.stats.losses}L`}
-                          color={computed.stats.winRate >= 50 ? "text-green-400" : "text-red-400"}
-                        />
-                        <StatBox
-                          label="K/D RATIO"
-                          value={computed.stats.kd.toFixed(2)}
-                          sub={`${computed.stats.totalKills}K ${computed.stats.totalDeaths}D`}
-                          color={computed.stats.kd >= 1 ? "text-green-400" : "text-red-400"}
-                        />
-                        <StatBox
-                          label="KDA"
-                          value={computed.stats.kda.toFixed(2)}
-                          sub={`${computed.stats.avgKills.toFixed(1)} / ${computed.stats.avgDeaths.toFixed(1)} / ${computed.stats.avgAssists.toFixed(1)}`}
-                        />
-                        <StatBox
-                          label="HEADSHOT %"
-                          value={`${computed.stats.headshotPct.toFixed(1)}%`}
-                          sub={`${computed.stats.totalHeadshots} headshots`}
-                          color={computed.stats.headshotPct >= 25 ? "text-primary" : "text-foreground"}
-                        />
+                        <StatBox label="WIN RATE" value={`${computed.stats.winRate.toFixed(1)}%`} sub={`${computed.stats.wins}W ${computed.stats.losses}L`} color={computed.stats.winRate >= 50 ? "text-green-400" : "text-red-400"} />
+                        <StatBox label="K/D RATIO" value={computed.stats.kd.toFixed(2)} sub={`${computed.stats.totalKills}K ${computed.stats.totalDeaths}D`} color={computed.stats.kd >= 1 ? "text-green-400" : "text-red-400"} />
+                        <StatBox label="KDA" value={computed.stats.kda.toFixed(2)} sub={`${computed.stats.avgKills.toFixed(1)} / ${computed.stats.avgDeaths.toFixed(1)} / ${computed.stats.avgAssists.toFixed(1)}`} />
+                        <StatBox label="HEADSHOT %" value={`${computed.stats.headshotPct.toFixed(1)}%`} sub={`${computed.stats.totalHeadshots} headshots`} color={computed.stats.headshotPct >= 25 ? "text-primary" : "text-foreground"} />
                       </div>
 
-                      {/* Secondary Stats */}
                       <div className="grid grid-cols-3 gap-2">
                         <StatBox label="AVG SCORE" value={Math.round(computed.stats.avgScore).toLocaleString()} />
                         <StatBox label="AVG DAMAGE" value={Math.round(computed.stats.avgDamage).toLocaleString()} />
                         <StatBox label="MATCHES" value={computed.stats.totalMatches.toString()} />
                       </div>
 
-                      {/* Hit Distribution */}
                       <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
                         <div className="h-0.5 bg-primary" />
                         <div className="p-5">
                           <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 mb-3 flex items-center gap-2">
-                            <Target className="h-3.5 w-3.5 text-primary/60" />
-                            SHOT DISTRIBUTION
+                            <Target className="h-3.5 w-3.5 text-primary/60" /> SHOT DISTRIBUTION
                           </h3>
-                          <HitsBar
-                            hs={computed.stats.totalHeadshots}
-                            bs={computed.stats.totalBodyshots}
-                            ls={computed.stats.totalLegshots}
-                          />
+                          <HitsBar hs={computed.stats.totalHeadshots} bs={computed.stats.totalBodyshots} ls={computed.stats.totalLegshots} />
                         </div>
                       </div>
 
-                      {/* Top Agents Preview */}
+                      {/* Top agents preview */}
                       {computed.agents.length > 0 && (
                         <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
                           <div className="h-0.5 bg-primary" />
                           <div className="p-5">
                             <div className="flex items-center justify-between mb-3">
-                              <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 flex items-center gap-2">
-                                <Flame className="h-3.5 w-3.5 text-primary/60" />
-                                TOP AGENTS
-                              </h3>
-                              <button
-                                onClick={() => setActiveTab("agents")}
-                                className="text-[10px] text-primary/60 hover:text-primary font-display tracking-wider transition-colors"
-                              >
-                                VIEW ALL
-                              </button>
+                              <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 flex items-center gap-2"><Flame className="h-3.5 w-3.5 text-primary/60" /> TOP AGENTS</h3>
+                              <button onClick={() => setActiveTab("agents")} className="text-[10px] text-primary/60 hover:text-primary font-display tracking-wider transition-colors">VIEW ALL</button>
                             </div>
                             <div className="space-y-2">
                               {computed.agents.slice(0, 3).map((agent) => (
                                 <AgentCard key={agent.name} agent={agent} maxMatches={computed.agents[0]?.matches ?? 1} />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Top maps preview */}
+                      {computed.maps.length > 0 && (
+                        <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
+                          <div className="h-0.5 bg-primary" />
+                          <div className="p-5">
+                            <div className="flex items-center justify-between mb-3">
+                              <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 flex items-center gap-2"><MapPin className="h-3.5 w-3.5 text-primary/60" /> TOP MAPS</h3>
+                              <button onClick={() => setActiveTab("maps")} className="text-[10px] text-primary/60 hover:text-primary font-display tracking-wider transition-colors">VIEW ALL</button>
+                            </div>
+                            <div className="space-y-2">
+                              {computed.maps.slice(0, 3).map((map) => (
+                                <MapCard key={map.name} map={map} />
                               ))}
                             </div>
                           </div>
@@ -818,16 +949,8 @@ const Profile = () => {
                           <div className="h-0.5 bg-primary" />
                           <div className="p-5">
                             <div className="flex items-center justify-between mb-3">
-                              <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 flex items-center gap-2">
-                                <Swords className="h-3.5 w-3.5 text-primary/60" />
-                                RECENT MATCHES
-                              </h3>
-                              <button
-                                onClick={() => setActiveTab("matches")}
-                                className="text-[10px] text-primary/60 hover:text-primary font-display tracking-wider transition-colors"
-                              >
-                                VIEW ALL
-                              </button>
+                              <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 flex items-center gap-2"><Swords className="h-3.5 w-3.5 text-primary/60" /> RECENT MATCHES</h3>
+                              <button onClick={() => setActiveTab("matches")} className="text-[10px] text-primary/60 hover:text-primary font-display tracking-wider transition-colors">VIEW ALL</button>
                             </div>
                             <div className="space-y-1.5">
                               {filteredMatches.slice(0, 5).map((match) => (
@@ -846,8 +969,7 @@ const Profile = () => {
                       <div className="h-0.5 bg-primary" />
                       <div className="p-5">
                         <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 mb-3 flex items-center gap-2">
-                          <Clock className="h-3.5 w-3.5 text-primary/60" />
-                          MATCH HISTORY ({filteredMatches.length})
+                          <Clock className="h-3.5 w-3.5 text-primary/60" /> MATCH HISTORY ({filteredMatches.length})
                         </h3>
                         <div className="space-y-1.5">
                           {filteredMatches.map((match) => (
@@ -867,11 +989,8 @@ const Profile = () => {
                       <div className="h-0.5 bg-primary" />
                       <div className="p-5">
                         <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 mb-3 flex items-center gap-2">
-                          <Shield className="h-3.5 w-3.5 text-primary/60" />
-                          AGENT PERFORMANCE ({computed.agents.length})
+                          <Shield className="h-3.5 w-3.5 text-primary/60" /> AGENT PERFORMANCE ({computed.agents.length})
                         </h3>
-
-                        {/* Agent table header */}
                         <div className="hidden sm:grid grid-cols-[1fr_60px_60px_60px_60px_60px] gap-2 px-3 py-2 text-[9px] text-muted-foreground/30 font-display tracking-[0.2em]">
                           <span>AGENT</span>
                           <span className="text-center">PLAYED</span>
@@ -880,33 +999,21 @@ const Profile = () => {
                           <span className="text-center">HS %</span>
                           <span className="text-center">AVG SCR</span>
                         </div>
-
                         <div className="space-y-1.5 sm:space-y-1">
                           {computed.agents.map((agent) => {
                             const wr = agent.matches > 0 ? (agent.wins / agent.matches) * 100 : 0;
                             const kd = agent.deaths > 0 ? agent.kills / agent.deaths : agent.kills;
                             const barWidth = computed.agents[0]?.matches ? (agent.matches / computed.agents[0].matches) * 100 : 0;
-
                             return (
                               <div key={agent.name}>
-                                {/* Mobile */}
-                                <div className="sm:hidden">
-                                  <AgentCard agent={agent} maxMatches={computed.agents[0]?.matches ?? 1} />
-                                </div>
-                                {/* Desktop table row */}
+                                <div className="sm:hidden"><AgentCard agent={agent} maxMatches={computed.agents[0]?.matches ?? 1} /></div>
                                 <div className="hidden sm:grid grid-cols-[1fr_60px_60px_60px_60px_60px] gap-2 items-center p-2.5 bg-white/[0.02] border border-white/[0.04] clip-angle-sm hover:border-white/[0.08] transition-colors">
                                   <div className="flex items-center gap-2.5 min-w-0">
                                     <div className="w-8 h-8 bg-white/[0.04] clip-angle-sm flex items-center justify-center shrink-0 overflow-hidden">
-                                      <img
-                                        src={`https://media.valorant-api.com/agents/${agent.agentId}/displayicon.png`}
-                                        alt={agent.name}
-                                        className="w-7 h-7 object-cover"
-                                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                                      />
+                                      <img src={`https://media.valorant-api.com/agents/${agent.agentId}/displayicon.png`} alt={agent.name} className="w-7 h-7 object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                                     </div>
                                     <div className="min-w-0">
                                       <p className="font-display text-xs font-bold tracking-wider text-foreground truncate">{agent.name.toUpperCase()}</p>
-                                      {/* Usage bar */}
                                       <div className="h-0.5 w-20 bg-white/[0.04] mt-1 overflow-hidden">
                                         <div className="h-full bg-primary/40" style={{ width: `${barWidth}%` }} />
                                       </div>
@@ -922,24 +1029,71 @@ const Profile = () => {
                             );
                           })}
                         </div>
-
-                        {computed.agents.length === 0 && (
-                          <p className="text-sm text-muted-foreground/30 text-center py-8">No agent data available</p>
-                        )}
+                        {computed.agents.length === 0 && <p className="text-sm text-muted-foreground/30 text-center py-8">No agent data available</p>}
                       </div>
                     </div>
                   )}
+
+                  {/* ─── Maps Tab ─── */}
+                  {activeTab === "maps" && computed && (
+                    <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
+                      <div className="h-0.5 bg-primary" />
+                      <div className="p-5">
+                        <h3 className="font-display text-xs tracking-[0.15em] text-muted-foreground/60 mb-3 flex items-center gap-2">
+                          <MapPin className="h-3.5 w-3.5 text-primary/60" /> MAP PERFORMANCE ({computed.maps.length})
+                        </h3>
+
+                        {/* Desktop table header */}
+                        <div className="hidden sm:grid grid-cols-[1fr_60px_70px_60px_90px] gap-2 px-3 py-2 text-[9px] text-muted-foreground/30 font-display tracking-[0.2em]">
+                          <span>MAP</span>
+                          <span className="text-center">PLAYED</span>
+                          <span className="text-center">WIN %</span>
+                          <span className="text-center">KD</span>
+                          <span className="text-center">AVG K/D/A</span>
+                        </div>
+
+                        <div className="space-y-1.5 sm:space-y-1">
+                          {computed.maps.map((map) => (
+                            <div key={map.name}>
+                              {/* Mobile */}
+                              <div className="sm:hidden"><MapCard map={map} /></div>
+                              {/* Desktop */}
+                              <div className="hidden sm:grid grid-cols-[1fr_60px_70px_60px_90px] gap-2 items-center p-2.5 bg-white/[0.02] border border-white/[0.04] clip-angle-sm hover:border-white/[0.08] transition-colors">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-12 h-8 bg-white/[0.04] clip-angle-sm flex items-center justify-center shrink-0 overflow-hidden">
+                                    <img
+                                      src={`https://media.valorant-api.com/maps/${map.mapId}/listviewicon.png`}
+                                      alt={map.name}
+                                      className="w-full h-full object-cover opacity-70"
+                                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                    />
+                                  </div>
+                                  <p className="font-display text-xs font-bold tracking-wider text-foreground truncate">{map.name.toUpperCase()}</p>
+                                </div>
+                                <span className="font-display text-xs text-center text-muted-foreground">{map.matches}</span>
+                                <span className={`font-display text-xs text-center font-bold ${map.winRate >= 50 ? "text-green-400" : "text-red-400"}`}>
+                                  {map.winRate.toFixed(0)}%
+                                  <span className="text-[9px] text-muted-foreground/40 font-normal ml-1">{map.wins}W {map.losses}L</span>
+                                </span>
+                                <span className={`font-display text-xs text-center font-bold ${map.kd >= 1 ? "text-green-400" : "text-red-400"}`}>{map.kd.toFixed(2)}</span>
+                                <span className="font-display text-xs text-center text-muted-foreground">{map.avgKills.toFixed(1)}/{map.avgDeaths.toFixed(1)}/{map.avgAssists.toFixed(1)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {computed.maps.length === 0 && <p className="text-sm text-muted-foreground/30 text-center py-8">No map data available</p>}
+                      </div>
+                    </div>
+                  )}
+                  </div>
                 </>
               )}
 
-              {/* If account found but no matches at all */}
               {matches.length === 0 && (
                 <div className="bg-card border border-white/[0.06] clip-angle overflow-hidden">
                   <div className="h-0.5 bg-primary" />
                   <div className="p-8 text-center">
-                    <p className="font-display text-sm tracking-wider text-muted-foreground/40">
-                      No recent match data available
-                    </p>
+                    <p className="font-display text-sm tracking-wider text-muted-foreground/40">No recent match data available</p>
                   </div>
                 </div>
               )}
