@@ -1,12 +1,8 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Copy, Check, LogOut, Swords, Gamepad2, Users, Globe, MapPin } from "lucide-react";
+import { Copy, Check, LogOut, Swords, Gamepad2, Users, Globe, MapPin, Minus } from "lucide-react";
 import type { LFGPost } from "@/lib/types";
-import { REGIONS } from "@/lib/types";
-import { RankIcon } from "@/components/RankIcon";
+import { REGIONS, RANK_ICONS, UNRANKED_ICON, type Rank } from "@/lib/types";
 import { getSavedRiotId } from "@/hooks/use-lfg-store";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "@/hooks/use-toast";
@@ -19,6 +15,27 @@ interface LFGCardProps {
   onLeave: () => void;
 }
 
+function RankDisplay({ rankMin, rankMax }: { rankMin: Rank | "Any"; rankMax: Rank | "Any" }) {
+  if (rankMin === "Any") {
+    return <img src={UNRANKED_ICON} alt="Any" className="h-9 w-9 object-contain opacity-60" title="Any rank" />;
+  }
+
+  const minIcon = RANK_ICONS[rankMin as Rank];
+  const maxIcon = RANK_ICONS[rankMax as Rank];
+
+  if (rankMin === rankMax) {
+    return <img src={minIcon} alt={rankMin} className="h-9 w-9 object-contain" title={rankMin} />;
+  }
+
+  return (
+    <div className="flex items-center gap-0.5">
+      <img src={minIcon} alt={rankMin} className="h-8 w-8 object-contain" title={rankMin} />
+      <Minus className="h-2.5 w-2.5 text-muted-foreground/40" />
+      <img src={maxIcon} alt={rankMax} className="h-8 w-8 object-contain" title={rankMax} />
+    </div>
+  );
+}
+
 export function LFGCard({ post, isJoined, isMyPost, onJoin, onLeave }: LFGCardProps) {
   const { user } = useAuth();
   const [showCode, setShowCode] = useState(false);
@@ -27,9 +44,8 @@ export function LFGCard({ post, isJoined, isMyPost, onJoin, onLeave }: LFGCardPr
   const [copied, setCopied] = useState(false);
 
   const slotsRemaining = post.slotsTotal - post.slotsFilled;
-  const fillPercent = (post.slotsFilled / post.slotsTotal) * 100;
   const isFull = post.status === "full";
-  const regionLabel = post.region ? REGIONS.find(r => r.id === post.region)?.label : null;
+  const regionLabel = REGIONS.find(r => r.id === post.region)?.label ?? post.region;
 
   const handleJoin = () => {
     if (!riotId.trim()) {
@@ -48,75 +64,65 @@ export function LFGCard({ post, isJoined, isMyPost, onJoin, onLeave }: LFGCardPr
   };
 
   const modeIcon = post.gameMode === "Competitive" ? (
-    <Swords className="h-3.5 w-3.5 text-primary" />
+    <Swords className="h-3 w-3 text-primary" />
   ) : post.gameMode === "Unrated" ? (
-    <Gamepad2 className="h-3.5 w-3.5 text-muted-foreground" />
+    <Gamepad2 className="h-3 w-3 text-muted-foreground" />
   ) : (
-    <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+    <Globe className="h-3 w-3 text-muted-foreground" />
   );
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-    >
-      <Card className={`clip-angle bg-card border-border overflow-hidden transition-all duration-300 ${
-        isFull ? "opacity-50" : "hover:glow-red hover:border-primary/20"
+      <div className={`bg-card border border-white/[0.06] clip-angle overflow-hidden transition-all duration-200 ${
+        isFull ? "opacity-40" : "hover:border-primary/20 hover:glow-red"
       }`}>
         <div className="h-0.5 bg-primary" />
-        <CardContent className="p-5 space-y-4">
-          {/* Header row */}
-          <div className="flex items-start justify-between">
-            <div className="space-y-1.5">
-              <p className="font-display text-lg font-bold tracking-wide text-foreground">{post.riotId}</p>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5">
+        <div className="p-4 space-y-3">
+          {/* Header */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="font-display text-base font-bold tracking-wide text-foreground truncate">{post.riotId}</p>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <div className="flex items-center gap-1">
                   {modeIcon}
-                  <span className="text-xs text-muted-foreground font-display tracking-wider">{post.gameMode.toUpperCase()}</span>
+                  <span className="text-[11px] text-muted-foreground font-display tracking-wider">{post.gameMode.toUpperCase()}</span>
                 </div>
-                {regionLabel && (
-                  <div className="flex items-center gap-1">
-                    <MapPin className="h-3 w-3 text-muted-foreground/60" />
-                    <span className="text-xs text-muted-foreground/60 font-display tracking-wider">{regionLabel}</span>
-                  </div>
-                )}
+                <div className="flex items-center gap-1">
+                  <MapPin className="h-2.5 w-2.5 text-muted-foreground/50" />
+                  <span className="text-[11px] text-muted-foreground/50 font-display tracking-wider">{regionLabel}</span>
+                </div>
               </div>
             </div>
-            <RankIcon rank={post.rankRequirement} size="lg" />
+            <div className="shrink-0">
+              <RankDisplay rankMin={post.rankMin} rankMax={post.rankMax} />
+            </div>
           </div>
 
-          {/* Slots progress */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <Users className="h-3.5 w-3.5" />
-                <span className="font-display tracking-wider">{post.slotsFilled}/{post.slotsTotal} FILLED</span>
-              </div>
-              <span className={`font-display tracking-wider ${isFull ? "text-primary" : "text-foreground"}`}>
-                {isFull ? "FULL" : `${slotsRemaining} SLOT${slotsRemaining !== 1 ? "S" : ""} LEFT`}
-              </span>
+          {/* Slots */}
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <Users className="h-3 w-3" />
+              <span className="font-display tracking-wider text-[11px]">{post.slotsFilled}/{post.slotsTotal} FILLED</span>
             </div>
-            <div className="h-1.5 w-full bg-secondary overflow-hidden" style={{ clipPath: "polygon(0 0, calc(100% - 4px) 0, 100% 100%, 4px 100%)" }}>
-              <motion.div className="h-full bg-primary" initial={{ width: 0 }} animate={{ width: `${fillPercent}%` }} transition={{ duration: 0.5 }} />
-            </div>
+            <span className={`font-display tracking-wider text-[11px] ${isFull ? "text-primary" : "text-foreground"}`}>
+              {isFull ? "FULL" : `${slotsRemaining} SLOT${slotsRemaining !== 1 ? "S" : ""} LEFT`}
+            </span>
           </div>
 
           {/* Actions */}
           {isJoined || showCode ? (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <code className="flex-1 bg-secondary px-3 py-2 font-mono text-sm text-primary tracking-widest">
+                <code className="flex-1 bg-white/[0.04] border border-white/[0.06] px-3 py-2 font-mono text-sm text-primary tracking-widest clip-angle-sm">
                   {post.partyCode}
                 </code>
-                <Button variant="outline" size="icon" onClick={handleCopy} className="shrink-0">
-                  {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
-                </Button>
+                <button onClick={handleCopy} className="shrink-0 w-9 h-9 flex items-center justify-center border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.06] clip-angle-sm transition-colors">
+                  {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5 text-muted-foreground" />}
+                </button>
               </div>
               {!isMyPost && (
-                <Button variant="ghost" size="sm" onClick={onLeave} className="text-muted-foreground text-xs w-full">
-                  <LogOut className="h-3 w-3 mr-1" /> Leave
-                </Button>
+                <button onClick={onLeave} className="w-full flex items-center justify-center gap-1.5 text-muted-foreground/60 hover:text-muted-foreground text-[11px] font-display tracking-wider py-1.5 transition-colors">
+                  <LogOut className="h-3 w-3" /> LEAVE
+                </button>
               )}
             </div>
           ) : joining ? (
@@ -125,28 +131,33 @@ export function LFGCard({ post, isJoined, isMyPost, onJoin, onLeave }: LFGCardPr
                 value={riotId}
                 onChange={(e) => setRiotId(e.target.value)}
                 placeholder="Your Riot ID (e.g. Player#NA1)"
-                className="bg-secondary border-border text-sm"
+                className="bg-white/[0.03] border-white/[0.08] text-sm h-9"
               />
               <div className="flex gap-2">
-                <Button onClick={handleJoin} className="flex-1 clip-angle-sm font-display text-xs tracking-wider">
-                  CONFIRM JOIN
-                </Button>
-                <Button variant="ghost" onClick={() => setJoining(false)} className="text-xs">
-                  Cancel
-                </Button>
+                <button onClick={handleJoin} className="flex-1 h-9 bg-primary text-primary-foreground font-display text-xs tracking-wider clip-angle-sm hover:opacity-90 transition-opacity">
+                  CONFIRM
+                </button>
+                <button onClick={() => setJoining(false)} className="h-9 px-3 text-muted-foreground font-display text-xs tracking-wider hover:text-foreground transition-colors">
+                  CANCEL
+                </button>
               </div>
             </div>
           ) : (
-            <Button
+            <button
               onClick={() => isMyPost ? setShowCode(true) : setJoining(true)}
               disabled={isFull && !isMyPost}
-              className="w-full clip-angle-sm font-display tracking-[0.15em]"
+              className={`w-full h-10 font-display text-xs tracking-[0.15em] clip-angle-sm transition-all ${
+                isFull && !isMyPost
+                  ? "bg-white/[0.04] text-muted-foreground cursor-not-allowed"
+                  : isMyPost
+                    ? "bg-white/[0.06] text-foreground border border-white/[0.08] hover:bg-white/[0.1]"
+                    : "bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98]"
+              }`}
             >
               {isMyPost ? "VIEW CODE" : isFull ? "LOBBY FULL" : "JOIN"}
-            </Button>
+            </button>
           )}
-        </CardContent>
-      </Card>
-    </motion.div>
+        </div>
+      </div>
   );
 }

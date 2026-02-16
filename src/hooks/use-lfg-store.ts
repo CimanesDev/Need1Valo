@@ -73,8 +73,8 @@ export function useLFGStore() {
 
   const createPost = useCallback((data: {
     riotId: string; partyCode: string; gameMode: GameMode;
-    rankRequirement: Rank | "Any"; slotsTotal: number;
-    region?: Region; authorId?: string;
+    rankMin: Rank | "Any"; rankMax: Rank | "Any"; slotsTotal: number;
+    region: Region; authorId?: string;
   }) => {
     const post: LFGPost = {
       id: crypto.randomUUID(),

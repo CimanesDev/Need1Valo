@@ -57,6 +57,10 @@
     @apply border-border;
   }
 
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     @apply bg-background text-foreground font-body antialiased;
   }
@@ -75,10 +79,32 @@
   .clip-angle-sm {
     clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
   }
+  .clip-angle-lg {
+    clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 20px 100%, 0 calc(100% - 20px));
+  }
   .glow-red {
     box-shadow: 0 0 20px hsl(355 100% 62% / 0.15), 0 0 60px hsl(355 100% 62% / 0.05);
   }
   .glow-red-strong {
     box-shadow: 0 0 20px hsl(355 100% 62% / 0.3), 0 0 60px hsl(355 100% 62% / 0.1);
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-8px); }
+  }
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+  .animate-float-delayed {
+    animation: float 3s ease-in-out 1.5s infinite;
+  }
+
+  @keyframes scan-line {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+  }
+  .animate-scan {
+    animation: scan-line 8s linear infinite;
   }
 }
