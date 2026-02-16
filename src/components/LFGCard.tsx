@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Copy, Check, LogOut, Swords, Gamepad2, Users, Globe, MapPin, Minus } from "lucide-react";
+import { Copy, Check, LogOut, Swords, Gamepad2, Users, Globe, MapPin, Minus, ShieldCheck } from "lucide-react";
 import type { LFGPost } from "@/lib/types";
 import { REGIONS, RANK_ICONS, UNRANKED_ICON, type Rank } from "@/lib/types";
 import { getSavedRiotId } from "@/hooks/use-lfg-store";
@@ -80,7 +80,12 @@ export function LFGCard({ post, isJoined, isMyPost, onJoin, onLeave }: LFGCardPr
           {/* Header */}
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1 space-y-1">
-              <p className="font-display text-base font-bold tracking-wide text-foreground truncate">{post.riotId}</p>
+              <p className="font-display text-base font-bold tracking-wide text-foreground truncate flex items-center gap-1.5">
+                {post.riotId}
+                {post.isVerified && (
+                  <ShieldCheck className="h-4 w-4 text-primary shrink-0" title="Verified rank" />
+                )}
+              </p>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <div className="flex items-center gap-1">
                   {modeIcon}
