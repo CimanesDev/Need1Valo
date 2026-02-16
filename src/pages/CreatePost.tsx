@@ -92,6 +92,7 @@ const CreatePost = () => {
       slotsTotal,
       region,
       authorId: user?.id,
+      isVerified: !!user?.verifiedRank,
     });
     toast({ title: "Lobby created!" });
     navigate("/");

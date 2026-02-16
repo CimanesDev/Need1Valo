@@ -74,7 +74,7 @@ export function useLFGStore() {
   const createPost = useCallback((data: {
     riotId: string; partyCode: string; gameMode: GameMode;
     rankMin: Rank | "Any"; rankMax: Rank | "Any"; slotsTotal: number;
-    region: Region; authorId?: string;
+    region: Region; authorId?: string; isVerified?: boolean;
   }) => {
     const post: LFGPost = {
       id: crypto.randomUUID(),
@@ -127,7 +127,9 @@ export function useLFGStore() {
     if (myPostId === postId) setMyPostIdState(null);
   }, [myPostId]);
 
-  const activePosts = posts.filter(p => p.status === "active" || p.status === "full");
+  const activePosts = posts
+    .filter(p => p.status === "active" || p.status === "full")
+    .sort((a, b) => (b.isVerified ? 1 : 0) - (a.isVerified ? 1 : 0));
   const myPost = posts.find(p => p.id === myPostId) || null;
 
   return { posts: activePosts, myPost, myJoinedPostIds, createPost, joinPost, leavePost, kickJoiner, completePost };

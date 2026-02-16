@@ -54,7 +54,7 @@ export function useAuth() {
 
   const logout = useCallback(() => { setUser(null); }, []);
 
-  const updateProfile = useCallback((updates: Partial<Pick<UserProfile, "username" | "riotId">>) => {
+  const updateProfile = useCallback((updates: Partial<Pick<UserProfile, "username" | "riotId" | "verifiedRank">>) => {
     setUser(prev => {
       if (!prev) return prev;
       const updated = { ...prev, ...updates };

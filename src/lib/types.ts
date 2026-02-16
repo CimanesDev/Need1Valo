@@ -65,6 +65,7 @@ export interface LFGPost {
   lastActivityAt: number;
   joiners: Joiner[];
   authorId?: string;
+  isVerified?: boolean;
 }
 
 export interface Joiner {
@@ -79,4 +80,85 @@ export interface UserProfile {
   riotId: string;
   email: string;
   createdAt: number;
+  verifiedRank?: Rank;
+}
+
+// HenrikDev API response types
+
+export interface ValorantAccount {
+  puuid: string;
+  region: string;
+  name: string;
+  tag: string;
+  account_level: number;
+  card: {
+    small: string;
+    large: string;
+    wide: string;
+    id: string;
+  };
+}
+
+export interface ValorantMMR {
+  current: {
+    tier: {
+      id: number;
+      name: string;
+    };
+    rr: number;
+    last_change: number;
+    elo: number;
+  };
+  peak: {
+    tier: {
+      id: number;
+      name: string;
+    };
+    season: {
+      short: string;
+    };
+  };
+}
+
+export interface ValorantMatchPlayer {
+  name: string;
+  tag: string;
+  team_id: string;
+  agent: { name: string; id: string };
+  stats: {
+    kills: number;
+    deaths: number;
+    assists: number;
+    score: number;
+    headshots: number;
+    bodyshots: number;
+    legshots: number;
+    damage: {
+      dealt: number;
+      received: number;
+    };
+  };
+  ability_casts: {
+    grenade: number;
+    ability1: number;
+    ability2: number;
+    ultimate: number;
+  };
+  tier: { id: number; name: string };
+}
+
+export interface ValorantMatch {
+  metadata: {
+    match_id: string;
+    map: { name: string; id: string };
+    started_at: string;
+    game_length_in_ms: number;
+    queue: { id: string; name: string; mode_type: string };
+    season: { short: string };
+  };
+  players: ValorantMatchPlayer[];
+  teams: {
+    team_id: string;
+    rounds: { won: number; lost: number };
+  }[];
 }

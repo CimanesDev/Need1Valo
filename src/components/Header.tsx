@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Crosshair, Plus, User, LogOut, Menu, X } from "lucide-react";
+import { Crosshair, Plus, User, LogOut, Menu, X, Search } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { AuthModal } from "@/components/AuthModal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -36,6 +36,12 @@ export function Header() {
                 LOBBIES
               </a>
             )}
+            <Link
+              to="/profile"
+              className="font-display text-xs tracking-[0.15em] text-muted-foreground hover:text-foreground px-3 py-1.5 transition-colors"
+            >
+              PROFILE
+            </Link>
             <Link
               to="/create"
               className="inline-flex items-center gap-2 bg-primary text-primary-foreground font-display text-xs tracking-[0.15em] h-9 px-5 clip-angle-sm hover:opacity-90 transition-opacity"
@@ -94,6 +100,14 @@ export function Header() {
                   LOBBIES
                 </a>
               )}
+              <Link
+                to="/profile"
+                onClick={() => setMobileOpen(false)}
+                className="inline-flex items-center gap-2 font-display text-sm tracking-[0.15em] text-muted-foreground hover:text-foreground px-3 py-3 transition-colors"
+              >
+                <Search className="h-4 w-4" />
+                PROFILE
+              </Link>
               <Link
                 to="/create"
                 onClick={() => setMobileOpen(false)}

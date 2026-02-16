@@ -3,7 +3,14 @@
     "allow": [
       "Bash(npm uninstall:*)",
       "Bash(npx tsc:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "WebSearch",
+      "WebFetch(domain:docs.henrikdev.xyz)",
+      "WebFetch(domain:app.swaggerhub.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl:*)",
+      "Bash(python3:*)"
     ]
   }
 }
