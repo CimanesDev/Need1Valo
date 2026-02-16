@@ -30,6 +30,10 @@ export const RANK_ICONS: Record<Rank, string> = {
 
 export const UNRANKED_ICON = unrankedIcon;
 
+export function rankIndex(rank: Rank): number {
+  return RANKS.indexOf(rank);
+}
+
 export const GAME_MODES = ["Competitive", "Unrated", "Others"] as const;
 export type GameMode = typeof GAME_MODES[number];
 
@@ -51,8 +55,9 @@ export interface LFGPost {
   riotId: string;
   partyCode: string;
   gameMode: GameMode;
-  rankRequirement: Rank | "Any";
-  region?: Region;
+  rankMin: Rank | "Any";
+  rankMax: Rank | "Any";
+  region: Region;
   slotsTotal: number;
   slotsFilled: number;
   status: PostStatus;
